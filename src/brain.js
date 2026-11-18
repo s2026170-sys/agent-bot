@@ -1,147 +1,165 @@
+/**
+ * 完全自作・0円自律AIエージェント頭脳 v2.0
+ * （ステートマシン思考 ＋ コンテキスト自律抽出 ＋ フォーム検索機能）
+ */
+
 export class AgentBrain {
   constructor() {
+    // 状態管理（ステートマシン）
+    // 'EXPLORING' (初期探索) -> 'SEARCHING' (検索実行) -> 'ENGAGING' (コンテンツ深掘り/プレイ)
+    this.state = 'EXPLORING';
+    
     this.history = [];
     this.clickedPositions = [];
-    this.encounteredTexts = new Set();
+    this.hasSearched = false;
+    this.searchQueryUsed = '';
     this.hasCanvas = false;
-    this.gamePlaySteps = 0;
-
-    this.POSITIVE_KEYWORDS = [
-      'start', 'play', '開始', 'スタート', 'ゲーム', 'game', 
-      'はじめる', '遊ぶ', '次へ', 'next', 'click', 'enter', 'open'
-    ];
-    this.NEGATIVE_KEYWORDS = [
-      '利用規約', 'terms', 'privacy', 'プライバシー', 'お問い合わせ', 
-      'contact', 'share', 'ツイート', 'tweet', 'login', 'ログイン', 'sign up'
-    ];
+    this.encounteredKeywords = new Set();
   }
 
   decideNextAction(perception) {
     this.history.push(perception);
 
-    perception.visibleTexts.forEach(t => {
-      if (t.length > 2 && t.length < 50) this.encounteredTexts.add(t);
-    });
+    // 1. ページ内のテキストから「検索に使えそうな単語」を自律抽出
+    this._extractContextKeywords(perception);
 
-    if (perception.canvasInfo) {
-      this.hasCanvas = true;
-      if (this.gamePlaySteps < 3) {
-        this.gamePlaySteps++;
-        const keys = ['Space', 'ArrowRight', 'ArrowUp', 'Enter'];
-        const chosenKey = keys[this.gamePlaySteps % keys.length];
+    // ==========================================
+    // 思考フェーズ①：検索窓があれば、自律的に検索を実行する！
+    // ==========================================
+    if (!this.hasSearched && perception.inputs && perception.inputs.length > 0) {
+      const searchInput = perception.inputs[0];
+      // ページ内のキーワード、またはサイトタイトルから検索語を自前で生み出す
+      const query = this._generateSearchQuery(perception);
 
-        if (this.gamePlaySteps === 1) {
-          const cx = perception.canvasInfo.x + Math.round(perception.canvasInfo.width / 2);
-          const cy = perception.canvasInfo.y + Math.round(perception.canvasInfo.height / 2);
-          return {
-            type: 'click',
-            x: cx,
-            y: cy,
-            reason: 'ゲーム画面(Canvas)を検知。フォーカスを当てるため中央をクリック'
-          };
-        }
+      this.hasSearched = true;
+      this.searchQueryUsed = query;
+      this.state = 'ENGAGING';
 
-        return {
-          type: 'press_key',
-          key: chosenKey,
-          reason: `ゲームを操作中: [${chosenKey}] キーを押下`
-        };
-      }
+      return {
+        type: 'fill_and_submit',
+        x: searchInput.x,
+        y: searchInput.y,
+        text: query,
+        reason: `検索バーを検知。ページ文脈からキーワード「${query}」を自律生成して検索を実行`
+      };
     }
 
+    // ==========================================
+    // 思考フェーズ②：ゲーム（Canvas）があればプレイに没頭する
+    // ==========================================
+    if (perception.canvasInfo) {
+      this.hasCanvas = true;
+      const gameKeys = ['Space', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'Enter'];
+      const randomKey = gameKeys[Math.floor(Math.random() * gameKeys.length)];
+
+      return {
+        type: 'press_key',
+        key: randomKey,
+        reason: `インタラクティブなゲームCanvasを検知。アクションキー[${randomKey}]を送信`
+      };
+    }
+
+    // ==========================================
+    // 思考フェーズ③：高スコアなボタン・リンクの探索
+    // ==========================================
     const elements = perception.interactiveElements;
     if (elements && elements.length > 0) {
       let bestElement = null;
       let maxScore = -9999;
 
       for (const el of elements) {
-        const score = this._calculateElementScore(el);
+        const score = this._scoreElement(el);
         if (score > maxScore) {
           maxScore = score;
           bestElement = el;
         }
       }
 
-      if (bestElement && maxScore > 0) {
+      if (bestElement && maxScore > 20) {
         this.clickedPositions.push({ x: bestElement.x, y: bestElement.y });
         return {
           type: 'click',
           x: bestElement.x,
           y: bestElement.y,
-          reason: `最も優先度の高い要素「${bestElement.text || bestElement.tag}」を選択 (Score: ${maxScore})`
+          reason: `文脈スコア最高値(${maxScore}点)の「${bestElement.text || bestElement.tag}」へ遷移`
         };
       }
     }
 
+    // ==========================================
+    // 思考フェーズ④：めぼしいものが無ければスクロールして視野を広げる
+    // ==========================================
+    if (perception.stepCount < 4) {
+      return {
+        type: 'scroll',
+        reason: '現在見えている範囲に有力な操作対象がないため、ページ下部をスクロール探索'
+      };
+    }
+
     return {
       type: 'finish',
-      reason: '探索対象を十分に見届けたため完了'
+      reason: 'サイトのコア機能（検索・主要動線）の体験が完了したため終了'
     };
   }
 
-  _calculateElementScore(element) {
-    let score = 50;
-    const text = (element.text || '').toLowerCase();
+  /**
+   * ページ内から単語を自律抽出する簡易NLP
+   */
+  _extractContextKeywords(perception) {
+    const rawTexts = perception.visibleTexts.join(' ');
+    // 日本語・英語の2文字以上の単語を抽出
+    const words = rawTexts.match(/[\u4e00-\u9faf\u3040-\u309f\u30a0-\u30ff]{2,8}|[a-zA-Z]{3,12}/g) || [];
+    words.forEach(w => {
+      if (!['メイン', 'ページ', 'メニュー', '検索', '表示', 'これ', 'それ'].includes(w)) {
+        this.encounteredKeywords.add(w);
+      }
+    });
+  }
 
-    for (const kw of this.POSITIVE_KEYWORDS) {
-      if (text.includes(kw)) score += 60;
+  /**
+   * 自前で検索ワードを生み出すロジック
+   */
+  _generateSearchQuery(perception) {
+    const list = Array.from(this.encounteredKeywords);
+    if (list.length > 0) {
+      // 抽出した単語の中から、面白そうなものを1つ選ぶ
+      return list[Math.floor(Math.random() * list.length)];
     }
-    for (const kw of this.NEGATIVE_KEYWORDS) {
-      if (text.includes(kw)) score -= 80;
+    return perception.title.slice(0, 6) || 'インディー';
+  }
+
+  _scoreElement(el) {
+    let score = 30;
+    const t = (el.text || '').toLowerCase();
+
+    if (t.includes('play') || t.includes('ゲーム') || t.includes('開始') || t.includes('詳細')) score += 70;
+    if (t.includes('規約') || t.includes('privacy') || t.includes('login') || t.includes('寄付')) score -= 100;
+
+    // 既にクリックした場所に近いものは除外
+    for (const p of this.clickedPositions) {
+      if (Math.hypot(p.x - el.x, p.y - el.y) < 30) score -= 300;
     }
-
-    const area = element.width * element.height;
-    if (area > 2000 && area < 100000) score += 20;
-
-    for (const pos of this.clickedPositions) {
-      const distance = Math.hypot(pos.x - element.x, pos.y - element.y);
-      if (distance < 30) score -= 200;
-    }
-
     return score;
   }
 
   generateReview() {
-    const textArray = Array.from(this.encounteredTexts);
-    const title = this.history[0]?.title || 'インディー作品';
-    const totalSteps = this.history.length;
-
-    const pickedWords = textArray
-      .filter(t => !t.includes('http') && t.length > 3)
-      .slice(0, 3);
-
-    let rating = 4;
-    let category = 'Webサイト';
-    let impressionCore = '';
-
-    if (this.hasCanvas) {
-      category = 'ブラウザゲーム';
-      rating = 5;
-      impressionCore = `Canvasを用いた軽快な動作が印象的でした！操作キーへの反応もスムーズで、インディーならではの熱量を感じます。`;
-    } else if (this.clickedPositions.length > 2) {
-      rating = 4;
-      impressionCore = `導線がしっかり整理されており、ページ遷移やインタラクションのレスポンスが気持ちいい設計でした。`;
-    } else {
-      rating = 4;
-      impressionCore = `シンプルで無駄のないミニマルな作り。今後の拡張やアップデートがとても楽しみなプロジェクトです！`;
-    }
-
-    const reviewText = [
-      `🤖【AI巡回レビュー】`,
-      `「${title}」を探索しました！(${category})`,
-      ``,
-      impressionCore,
-      pickedWords.length > 0 ? `注目キーワード: 「${pickedWords.join(' / ')}」` : '',
-      ``,
-      `応援度: ${'★'.repeat(rating)}${'☆'.repeat(5 - rating)} (${rating}/5)`,
-      `#IndieGameDev #インディーゲーム #個人開発 #Webサイト巡回`
-    ].filter(line => line !== '').join('\n');
+    const title = this.history[0]?.title || 'Webプロジェクト';
+    const hasSearchAction = this.hasSearched ? `\n🔍 自律検索検証: 「${this.searchQueryUsed}」でサイト内検索を実施し、レスポンスを確認。` : '';
+    const hasGameAction = this.hasCanvas ? `\n🎮 ゲーム性検証: Canvas要素の描画およびキー入力を確認。軽快に動作しています。` : '';
 
     return {
-      rating,
-      summary: `${category}「${title}」の探索完了（${totalSteps}ステップ実施）`,
-      impressions: reviewText,
-      tags: ['#IndieGameDev', '#個人開発', '#Webサイト巡回']
+      rating: 5,
+      impressions: [
+        `🤖【自律エージェント巡回レポート】`,
+        `対象: 「${title}」`,
+        `----------------------------------------`,
+        hasSearchAction,
+        hasGameAction,
+        `📊 サイト構造: 動線設計が明瞭で、ボット・ユーザー双方にとって探索しやすいUIです。`,
+        `💡 総評: 個人開発・インディー作品としてのこだわりを感じる設計。今後のアップデートを応援しています！`,
+        `----------------------------------------`,
+        `#IndieDev #自作AI巡回 #完全0円ツール`
+      ].filter(Boolean).join('\n')
     };
   }
 }

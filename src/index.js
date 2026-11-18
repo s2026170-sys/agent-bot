@@ -22,17 +22,20 @@ async function runAgent(targetUrl) {
 
   const page = await context.newPage();
 
+  // 広告ブロック
   await page.route('**/*', (route) => {
     const url = route.request().url();
     const isAd = AD_BLOCK_DOMAINS.some(domain => url.includes(domain));
-    if (isAd) {
-      return route.abort();
-    }
+    if (isAd) return route.abort();
     route.continue();
   });
 
   await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForTimeout(2000);
+
+  // 最初の状態を撮影
+  await page.screenshot({ path: 'step-0-start.png' });
+  console.log('[System] 初期画面を撮影しました: step-0-start.png');
 
   const brain = new AgentBrain();
   const MAX_STEPS = 5;
@@ -87,14 +90,19 @@ async function runAgent(targetUrl) {
     const action = brain.decideNextAction(perception);
     console.log(`[Brainの判断]: ${action.type} (理由: ${action.reason})`);
 
+    // ★ ここでAIの指示に従ってタップ（クリック）を実行！
     if (action.type === 'click') {
+      console.log(`👉 座標 (x: ${action.x}, y: ${action.y}) をタップします！`);
       await page.mouse.click(action.x, action.y);
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(2000);
+      // タップ後の画面を撮影
+      await page.screenshot({ path: `step-${step + 1}-after-click.png` });
+      console.log(`📸 タップ後の画面を撮影しました: step-${step + 1}-after-click.png`);
     } else if (action.type === 'press_key') {
+      console.log(`👉 キー [${action.key}] を入力します！`);
       await page.keyboard.press(action.key);
-      await page.waitForTimeout(500);
-    } else if (action.type === 'wait') {
-      await page.waitForTimeout(action.durationMs || 1000);
+      await page.waitForTimeout(1000);
+      await page.screenshot({ path: `step-${step + 1}-after-key.png` });
     } else if (action.type === 'finish') {
       console.log('[System] エージェントが探索完了を宣言しました。');
       break;
@@ -103,13 +111,10 @@ async function runAgent(targetUrl) {
 
   const review = brain.generateReview();
   console.log('\n================ 生成されたレビュー ================');
-  console.log(`スコア: ${review.rating} / 5`);
-  console.log(`概要: ${review.summary}`);
-  console.log(`投稿文:\n${review.impressions}`);
+  console.log(review.impressions);
   console.log('====================================================');
 
   await browser.close();
-  return review;
 }
 
 const testUrl = process.argv[2] || 'https://example.com';

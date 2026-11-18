@@ -22,7 +22,6 @@
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') {
         if (!isStarted || isGameOver) {
-          // スタート / リスタート
           isStarted = true;
           isGameOver = false;
           dinoY = 150; dinoVY = 0;
@@ -35,7 +34,6 @@
     });
 
     function loop() {
-      // スタート前
       if (!isStarted) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = '#666'; ctx.fillRect(0, 180, 600, 2);
@@ -54,7 +52,6 @@
         return;
       }
 
-      // ゲーム中
       dinoY += dinoVY;
       dinoVY += 0.8;
       if (dinoY >= 150) { dinoY = 150; dinoVY = 0; isJumping = false; }
@@ -62,7 +59,7 @@
       obstacleX -= speed;
       if (obstacleX < -20) { obstacleX = 600; score += 10; }
 
-      // 衝突判定（サボテン接触でGAME OVER）
+      // 衝突判定
       if (obstacleX < 80 && obstacleX + 20 > 50 && dinoY + 30 > 150) {
         isGameOver = true;
       }

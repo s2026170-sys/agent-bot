@@ -1,0 +1,11 @@
+{
+  "name": "autonomous-indie-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}

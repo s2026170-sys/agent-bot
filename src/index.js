@@ -35,7 +35,6 @@ async function runTraining() {
       const ctx = canvas.getContext('2d');
       const width = canvas.width;
       
-      // 地面付近（Y: 130〜180）をスキャン
       const imgData = ctx.getImageData(0, 130, width, 50);
       const currentPixels = Array.from(imgData.data);
 
@@ -53,7 +52,6 @@ async function runTraining() {
           const r = currentPixels[index];
           const prevR = prevPixels[index];
 
-          // ピクセル変化 ＆ 背景の白以外の物体
           if (Math.abs(r - prevR) > 30 && r < 200) {
             motionCount++;
           }
@@ -64,7 +62,6 @@ async function runTraining() {
         dangerDetected = true;
       }
 
-      // GAME OVERの文字が出ているか確認
       const centerData = ctx.getImageData(250, 90, 20, 20).data;
       let isGameOver = false;
       for (let i = 0; i < centerData.length; i += 4) {

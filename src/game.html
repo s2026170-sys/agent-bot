@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Indie Dino Run (Hardcore)</title>
+  <title>Indie Dino Run</title>
   <style>
     body { margin: 0; background: #222; display: flex; justify-content: center; align-items: center; height: 100vh; }
     canvas { background: #fff; border: 3px solid #555; }
@@ -14,18 +14,19 @@
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
 
+    let isStarted = false;
     let dinoY = 150, dinoVY = 0, isJumping = false;
-    let obstacleX = 600, speed = 7, score = 0;
+    let obstacleX = 600, speed = 6, score = 0;
     let isGameOver = false;
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') {
-        if (isGameOver) {
-          // リスタート
+        if (!isStarted || isGameOver) {
+          // スタート / リスタート
+          isStarted = true;
           isGameOver = false;
           dinoY = 150; dinoVY = 0;
           obstacleX = 600; score = 0;
-          loop();
         } else if (!isJumping) {
           dinoVY = -12;
           isJumping = true;
@@ -34,8 +35,26 @@
     });
 
     function loop() {
-      if (isGameOver) return;
+      // スタート前
+      if (!isStarted) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#666'; ctx.fillRect(0, 180, 600, 2);
+        ctx.fillStyle = '#2ea44f'; ctx.fillRect(50, 150, 30, 30);
+        ctx.fillStyle = '#333'; ctx.font = '20px monospace';
+        ctx.fillText('PRESS SPACE TO START', 180, 100);
+        requestAnimationFrame(loop);
+        return;
+      }
 
+      if (isGameOver) {
+        ctx.fillStyle = '#d73a49';
+        ctx.font = 'bold 36px monospace';
+        ctx.fillText('GAME OVER', 200, 100);
+        requestAnimationFrame(loop);
+        return;
+      }
+
+      // ゲーム中
       dinoY += dinoVY;
       dinoVY += 0.8;
       if (dinoY >= 150) { dinoY = 150; dinoVY = 0; isJumping = false; }
@@ -43,29 +62,20 @@
       obstacleX -= speed;
       if (obstacleX < -20) { obstacleX = 600; score += 10; }
 
-      // ★ 衝突判定（サボテンにぶつかったら即死！）
-      // 恐竜: X(50〜80), Y(dinoY〜dinoY+30)
-      // サボテン: X(obstacleX〜obstacleX+20), Y(150〜180)
+      // 衝突判定（サボテン接触でGAME OVER）
       if (obstacleX < 80 && obstacleX + 20 > 50 && dinoY + 30 > 150) {
         isGameOver = true;
       }
 
-      // 描画
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#666'; ctx.fillRect(0, 180, 600, 2); // 地面
-      ctx.fillStyle = '#2ea44f'; ctx.fillRect(50, dinoY, 30, 30); // 自機
-      ctx.fillStyle = '#000'; ctx.fillRect(obstacleX, 150, 20, 30); // 敵（黒色に変更）
+      ctx.fillStyle = '#666'; ctx.fillRect(0, 180, 600, 2);
+      ctx.fillStyle = '#2ea44f'; ctx.fillRect(50, dinoY, 30, 30);
+      ctx.fillStyle = '#000'; ctx.fillRect(obstacleX, 150, 20, 30);
 
       ctx.fillStyle = '#333'; ctx.font = '16px monospace';
       ctx.fillText(`SCORE: ${score}`, 20, 30);
 
-      if (isGameOver) {
-        ctx.fillStyle = '#d73a49';
-        ctx.font = 'bold 36px monospace';
-        ctx.fillText('GAME OVER', 200, 100);
-      } else {
-        requestAnimationFrame(loop);
-      }
+      requestAnimationFrame(loop);
     }
     loop();
   </script>

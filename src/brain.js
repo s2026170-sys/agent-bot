@@ -1,165 +1,102 @@
 /**
- * 完全自作・0円自律AIエージェント頭脳 v2.0
- * （ステートマシン思考 ＋ コンテキスト自律抽出 ＋ フォーム検索機能）
+ * 完全自作・純粋JavaScriptによる強化学習（Q-Learning）頭脳
  */
-
-export class AgentBrain {
+export class GameBrain {
   constructor() {
-    // 状態管理（ステートマシン）
-    // 'EXPLORING' (初期探索) -> 'SEARCHING' (検索実行) -> 'ENGAGING' (コンテンツ深掘り/プレイ)
-    this.state = 'EXPLORING';
-    
-    this.history = [];
-    this.clickedPositions = [];
-    this.hasSearched = false;
-    this.searchQueryUsed = '';
-    this.hasCanvas = false;
-    this.encounteredKeywords = new Set();
-  }
+    // Qテーブル（脳のシナプス）：Stateごとの各Actionの価値を記憶
+    // key: State文字列, value: [何もしないの価値, ジャンプの価値]
+    this.qTable = {};
 
-  decideNextAction(perception) {
-    this.history.push(perception);
+    // ハイパーパラメータ（機械学習の学習設定）
+    this.learningRate = 0.2;  // 学習率 (α): 新しい経験をどれくらい重視するか
+    this.discountFactor = 0.9; // 割引率 (γ): 将来の報酬をどれくらい重視するか
+    this.epsilon = 0.3;       // 探索率 (ε): 30%の確率で新しい動きを試し、70%は学習結果を使う
 
-    // 1. ページ内のテキストから「検索に使えそうな単語」を自律抽出
-    this._extractContextKeywords(perception);
-
-    // ==========================================
-    // 思考フェーズ①：検索窓があれば、自律的に検索を実行する！
-    // ==========================================
-    if (!this.hasSearched && perception.inputs && perception.inputs.length > 0) {
-      const searchInput = perception.inputs[0];
-      // ページ内のキーワード、またはサイトタイトルから検索語を自前で生み出す
-      const query = this._generateSearchQuery(perception);
-
-      this.hasSearched = true;
-      this.searchQueryUsed = query;
-      this.state = 'ENGAGING';
-
-      return {
-        type: 'fill_and_submit',
-        x: searchInput.x,
-        y: searchInput.y,
-        text: query,
-        reason: `検索バーを検知。ページ文脈からキーワード「${query}」を自律生成して検索を実行`
-      };
-    }
-
-    // ==========================================
-    // 思考フェーズ②：ゲーム（Canvas）があればプレイに没頭する
-    // ==========================================
-    if (perception.canvasInfo) {
-      this.hasCanvas = true;
-      const gameKeys = ['Space', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'Enter'];
-      const randomKey = gameKeys[Math.floor(Math.random() * gameKeys.length)];
-
-      return {
-        type: 'press_key',
-        key: randomKey,
-        reason: `インタラクティブなゲームCanvasを検知。アクションキー[${randomKey}]を送信`
-      };
-    }
-
-    // ==========================================
-    // 思考フェーズ③：高スコアなボタン・リンクの探索
-    // ==========================================
-    const elements = perception.interactiveElements;
-    if (elements && elements.length > 0) {
-      let bestElement = null;
-      let maxScore = -9999;
-
-      for (const el of elements) {
-        const score = this._scoreElement(el);
-        if (score > maxScore) {
-          maxScore = score;
-          bestElement = el;
-        }
-      }
-
-      if (bestElement && maxScore > 20) {
-        this.clickedPositions.push({ x: bestElement.x, y: bestElement.y });
-        return {
-          type: 'click',
-          x: bestElement.x,
-          y: bestElement.y,
-          reason: `文脈スコア最高値(${maxScore}点)の「${bestElement.text || bestElement.tag}」へ遷移`
-        };
-      }
-    }
-
-    // ==========================================
-    // 思考フェーズ④：めぼしいものが無ければスクロールして視野を広げる
-    // ==========================================
-    if (perception.stepCount < 4) {
-      return {
-        type: 'scroll',
-        reason: '現在見えている範囲に有力な操作対象がないため、ページ下部をスクロール探索'
-      };
-    }
-
-    return {
-      type: 'finish',
-      reason: 'サイトのコア機能（検索・主要動線）の体験が完了したため終了'
-    };
+    // 前回の状態と行動を記録（経験から学ぶため）
+    this.lastState = null;
+    this.lastAction = null;
+    this.totalReward = 0;
+    this.episodeCount = 1;
   }
 
   /**
-   * ページ内から単語を自律抽出する簡易NLP
+   * 1. 画面データから「State（状態）」を抽象化して切り出す
    */
-  _extractContextKeywords(perception) {
-    const rawTexts = perception.visibleTexts.join(' ');
-    // 日本語・英語の2文字以上の単語を抽出
-    const words = rawTexts.match(/[\u4e00-\u9faf\u3040-\u309f\u30a0-\u30ff]{2,8}|[a-zA-Z]{3,12}/g) || [];
-    words.forEach(w => {
-      if (!['メイン', 'ページ', 'メニュー', '検索', '表示', 'これ', 'それ'].includes(w)) {
-        this.encounteredKeywords.add(w);
-      }
-    });
+  getState(gameState) {
+    // 障害物があるかどうかを「STATE_CLEAR」か「STATE_DANGER」として認識
+    return gameState.hasObstacle ? 'DANGER' : 'CLEAR';
   }
 
   /**
-   * 自前で検索ワードを生み出すロジック
+   * 2. Q学習に基づき、次の行動を決定する（ε-greedy法）
    */
-  _generateSearchQuery(perception) {
-    const list = Array.from(this.encounteredKeywords);
-    if (list.length > 0) {
-      // 抽出した単語の中から、面白そうなものを1つ選ぶ
-      return list[Math.floor(Math.random() * list.length)];
+  decideGameAction(gameState) {
+    const currentState = this.getState(gameState);
+
+    // まだ知らないStateならQテーブルを初期化（[何もしない: 0, ジャンプ: 0]）
+    if (!this.qTable[currentState]) {
+      this.qTable[currentState] = [0.0, 0.0];
     }
-    return perception.title.slice(0, 6) || 'インディー';
+
+    let actionIndex;
+
+    // 【探索 vs 活用】
+    // 一定確率（epsilon）でランダムに行動（新しい可能性の模索）
+    if (Math.random() < this.epsilon) {
+      actionIndex = Math.random() < 0.5 ? 0 : 1;
+    } else {
+      // 学習済みのQ値が高い方の行動を選択（知識の活用）
+      const qValues = this.qTable[currentState];
+      actionIndex = qValues[0] >= qValues[1] ? 0 : 1;
+    }
+
+    // 1フレーム生き延びたので報酬 +1
+    const reward = 1.0;
+    this.totalReward += reward;
+
+    // 【Q値の更新（ベルマン方程式）】
+    // 前回の行動の結果を振り返って脳を強化する！
+    if (this.lastState !== null && this.lastAction !== null) {
+      this.updateQValue(this.lastState, this.lastAction, reward, currentState);
+    }
+
+    this.lastState = currentState;
+    this.lastAction = actionIndex;
+
+    return actionIndex === 1 ? { type: 'jump' } : { type: 'none' };
   }
 
-  _scoreElement(el) {
-    let score = 30;
-    const t = (el.text || '').toLowerCase();
-
-    if (t.includes('play') || t.includes('ゲーム') || t.includes('開始') || t.includes('詳細')) score += 70;
-    if (t.includes('規約') || t.includes('privacy') || t.includes('login') || t.includes('寄付')) score -= 100;
-
-    // 既にクリックした場所に近いものは除外
-    for (const p of this.clickedPositions) {
-      if (Math.hypot(p.x - el.x, p.y - el.y) < 30) score -= 300;
+  /**
+   * 3. 機械学習の心臓部：Q値の数学的更新
+   * Q(s, a) = Q(s, a) + α * [ R + γ * max(Q(s')) - Q(s, a) ]
+   */
+  updateQValue(state, action, reward, nextState) {
+    if (!this.qTable[nextState]) {
+      this.qTable[nextState] = [0.0, 0.0];
     }
-    return score;
+
+    const currentQ = this.qTable[state][action];
+    const maxNextQ = Math.max(...this.qTable[nextState]);
+
+    // 公式どおりに脳の数値を書き換える
+    const newQ = currentQ + this.learningRate * (reward + this.discountFactor * maxNextQ - currentQ);
+    this.qTable[state][action] = Number(newQ.toFixed(4));
   }
 
-  generateReview() {
-    const title = this.history[0]?.title || 'Webプロジェクト';
-    const hasSearchAction = this.hasSearched ? `\n🔍 自律検索検証: 「${this.searchQueryUsed}」でサイト内検索を実施し、レスポンスを確認。` : '';
-    const hasGameAction = this.hasCanvas ? `\n🎮 ゲーム性検証: Canvas要素の描画およびキー入力を確認。軽快に動作しています。` : '';
+  /**
+   * ゲームオーバー時にペナルティを与えて反省させる
+   */
+  learnFromDeath() {
+    if (this.lastState !== null && this.lastAction !== null) {
+      // 死亡時は強烈なマイナス報酬（-50）を与えて「その行動はダメだった」と学習
+      this.updateQValue(this.lastState, this.lastAction, -50.0, 'DEAD');
+    }
+    console.log(`🧠 [学習完了 Episode ${this.episodeCount}] 累計報酬スコア: ${this.totalReward}`);
+    console.log(`📊 [学習済みのQテーブル(脳内)]:`, JSON.stringify(this.qTable));
 
-    return {
-      rating: 5,
-      impressions: [
-        `🤖【自律エージェント巡回レポート】`,
-        `対象: 「${title}」`,
-        `----------------------------------------`,
-        hasSearchAction,
-        hasGameAction,
-        `📊 サイト構造: 動線設計が明瞭で、ボット・ユーザー双方にとって探索しやすいUIです。`,
-        `💡 総評: 個人開発・インディー作品としてのこだわりを感じる設計。今後のアップデートを応援しています！`,
-        `----------------------------------------`,
-        `#IndieDev #自作AI巡回 #完全0円ツール`
-      ].filter(Boolean).join('\n')
-    };
+    this.episodeCount++;
+    this.totalReward = 0;
+    this.lastState = null;
+    this.lastAction = null;
   }
 }

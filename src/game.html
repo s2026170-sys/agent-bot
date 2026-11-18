@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Indie Dino Run</title>
+  <style>
+    body { margin: 0; background: #f7f7f7; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; }
+    canvas { background: #fff; border: 2px solid #333; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="600" height="200"></canvas>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    let dinoY = 150, dinoVY = 0, isJumping = false;
+    let obstacleX = 600, speed = 6, score = 0;
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && !isJumping) {
+        dinoVY = -12;
+        isJumping = true;
+      }
+    });
+
+    function loop() {
+      // 物理演算
+      dinoY += dinoVY;
+      dinoVY += 0.8; // 重力
+      if (dinoY >= 150) { dinoY = 150; dinoVY = 0; isJumping = false; }
+
+      // 障害物の移動
+      obstacleX -= speed;
+      if (obstacleX < -20) { obstacleX = 600; score += 10; }
+
+      // 描画
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // 地面
+      ctx.fillStyle = '#666';
+      ctx.fillRect(0, 180, 600, 2);
+
+      // 恐竜（緑の四角）
+      ctx.fillStyle = '#2ea44f';
+      ctx.fillRect(50, dinoY, 30, 30);
+
+      // 障害物・サボテン（黒の四角）
+      ctx.fillStyle = '#d73a49';
+      ctx.fillRect(obstacleX, 150, 20, 30);
+
+      // スコア
+      ctx.fillStyle = '#333';
+      ctx.font = '16px monospace';
+      ctx.fillText(`SCORE: ${score}`, 20, 30);
+
+      requestAnimationFrame(loop);
+    }
+    loop();
+  </script>
+</body>
+</html>
